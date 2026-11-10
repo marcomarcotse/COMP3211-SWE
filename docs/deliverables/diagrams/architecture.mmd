@@ -22,7 +22,8 @@ flowchart TB
 
     file[("PIM File<br/>*.pim (UTF-8 JSON)")]
 
-    user <-- "keys, lines / screen" --> curses
+    user <-- "keys / full-screen display" --> curses
+    user <-- "lines / line display" --> term
     curses -- "finished answers" --> term
     term --- helpers
     term -- "one call per action" --> app

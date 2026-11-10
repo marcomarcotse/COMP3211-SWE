@@ -2,8 +2,8 @@
 title: "Design Document"
 subtitle: "Personal Information Management (PIM) System"
 short-title: "PIM System · Design Document"
-version: "1.4"
-date: "8 November 2026"
+version: "1.5"
+date: "10 November 2026"
 status: "Final"
 deliverable: "Deliverable 2"
 toc: true
@@ -35,12 +35,12 @@ The system uses the **Model–View–Controller (MVC)** pattern. Each of the thr
 
 **Why MVC.** There are four reasons.
 
-1. **The brief asks for it.** All model code must be in a separate package named `model` so that it can be unit-tested. MVC draws exactly that line: the model holds the data and the rules and knows nothing about the screen.
+1. **MVC fits the required model boundary.** The brief requires a separate `model` package for unit testing and suggests MVC as a guide. In this design, the model owns the data and rules and can be tested independently of the screen.
 2. **It fits an interactive program.** The PIM runs a loop: read one user action, change the data, show the new state. MVC splits that loop into three jobs. The View reads input and draws the screen, the Controller turns one finished action into model calls, and the Model applies the rules.
-3. **Two front ends share one controller.** On an interactive terminal the View is a full-screen `curses` interface; for scripted input, such as the tests, it is a line-by-line interface. Both call the same `App`, so their behaviour cannot drift apart.
+3. **Two front ends share one controller.** The View uses `curses` for the full-screen interface and `Terminal` for the line interface used by scripted sessions. Both use `App` for command handling and share the same model rules.
 4. **Tests need no screen.** Search (US7), persistence (US10, US11), and alarms are tested by calling `PIM` directly. The current time `now` is passed in, so the alarm tests do not depend on the wall clock.
 
-![Architecture of the PIM system. Solid arrows are calls; dotted arrows from `pim.py` show object creation; the dotted arrow from the View is its use of model value types.](diagrams/architecture.png){width=100%}
+![Architecture of the PIM system. Solid arrows show user input and output or calls between components. Dotted arrows show object creation from `pim.py` and the View's use of model value types.](diagrams/architecture.png){width=100%}
 
 **Alternatives considered.**
 
@@ -50,7 +50,7 @@ The system uses the **Model–View–Controller (MVC)** pattern. Each of the thr
 ## 2.2 How the components are instantiated
 
 | Component | Package and classes | Responsibility in this system |
-|----------------|------------------------------------------------------------|----------------------------------------------------------------------|
+|--------------------|----------------------------------------------------------|--------------------------------------------------------------------|
 | Model | `model`: `PIM`, the PIR classes, the alarm classes, the criterion classes, `pimfile` | Holds the Working Collection and assigns Ids. Validates every field. Parses and evaluates Search Criteria. Reads and writes the PIM File. Computes the due alarms for a given `now`. Raises a subclass of `PIMError` for every rule violation. |
 | Controller | `controller`: `App`, `errors` | Handles one completed user action: create, modify, delete, search, print, save, or load. Keeps the Current Result, the active criterion, and the Selection. Turns every model exception into one English status line, so no exception reaches the user as a traceback. |
 | View | `view`: `Terminal`, `CursesUI`, and helper modules | Owns the event loop with its 500 ms tick. Reads keys or lines, asks for fields one at a time, and draws the title, the Alarm Alerts, the list, the details, and the status line. Remembers which alerts were dismissed. |
@@ -81,10 +81,10 @@ tests/unit, tests/integration, tests/e2e
 **Dependency rules.**
 
 - `model` imports nothing from `view` or `controller`, and nothing outside the standard library.
-- `controller` imports only from `model`.
+- `controller` depends on `model`, its own modules, and the standard library.
 - `view` sends every user action to `controller.App`. From `controller` it also uses the status constants, the help text, and `errors.message_for`.
 - `view` uses `model` only for value types and helpers: it displays `PIR` and `DueAlarm` objects, builds `RelativeAlarm` and `AbsoluteAlarm` values from the alarm prompts, looks up a PIR class and its `FIELDS` to generate prompts, formats times with `format_datetime`, shows the clock in `HKT`, and catches `PIMError`.
-- `view` holds no business rules and does not know the file format; `controller` never reads or writes files itself.
+- `view` delegates data validation and persistence. The controller checks whether a save would overwrite an existing path, and the model reads and writes the PIM File contents.
 
 **The interface of `model`.** Other packages use only these names: `PIM`; `parse_criterion`; the classes `Note`, `Task`, `Event`, `Contact`, `RelativeAlarm`, `AbsoluteAlarm`, and `DueAlarm`; the exception classes; and the helpers `pir_class`, `format_datetime`, `HKT`, the field-kind constants, and `append_pim_extension` (which `App.save_target` uses to show the final file name before an overwrite question). Validation, matching, the tokenizer, and the JSON codec stay inside the package.
 
@@ -131,7 +131,7 @@ The Working Collection: PIR identity, search, persistence, and due alarms.
 - `_bound_path: str | None`: the Bound File.
 
 | Return type | Method | Arguments | Exceptions | Description |
-|--------------------------|--------------------------|----------------------------------------|----------------------------|----------------------------------------------|
+|------------------|-----------------|-----------------------|--------------------|----------------------|
 | `Note` | `create_note` | `text: str \| None` | `ValidationError` | Creates and inserts a Note with the next Id, and marks the collection dirty. |
 | `Task` | `create_task` | `description: str \| None`, `deadline: datetime \| str \| None = None` | `ValidationError` | Creates a Task; the deadline is optional. |
 | `Event` | `create_event` | `description: str \| None`, `start: datetime \| str \| None`, `alarms: list[AlarmSpec] \| None = None` | `ValidationError` | Creates an Event and rejects alarm times out of range (FR-8). |
@@ -158,7 +158,7 @@ The base class of all records.
 - `FIELDS: tuple[FieldSpec, ...]` (class constant)
 
 | Return type | Method | Arguments | Exceptions | Description |
-|------------------------|----------------------|------------------------|--------------------------|------------------------------------------------|
+|-------------------|---------------|----------------|-------------------|-------------------------------|
 | `str` | `display_name` (property) | — | — | The derived list label (SRS glossary). |
 | `list[str]` | `text_fields` | — | — | Every text value that is set, used by unqualified `contains`. |
 | `str \| None` | `text_value` | `field: str` | — | The named text field, or `None` if this type has no such field or it is not set. |
@@ -172,7 +172,7 @@ The base class of all records.
 The subclass constructors:
 
 | Subclass | Constructor arguments | Extra fields | Exceptions |
-|--------------|--------------------------------------------------|--------------------------------------------|--------------------|
+|------------|--------------------------------------|--------------------------------|------------------|
 | `Note` | `pir_id: int`, `text: str \| None` | `text: str` | `ValidationError` |
 | `Task` | `pir_id: int`, `description: str \| None`, `deadline: datetime \| str \| None = None` | `description: str`, `deadline: datetime \| None` | `ValidationError` |
 | `Event` | `pir_id: int`, `description: str \| None`, `start: datetime \| str \| None`, `alarms: list[AlarmSpec] \| None = None` | `description: str`, `start: datetime`, `alarms: list[RelativeAlarm \| AbsoluteAlarm]` | `ValidationError` |
@@ -194,7 +194,7 @@ The subclass constructors:
 ### Criterion classes (module `model.criterion`)
 
 | Class | Constructor | Fields | `matches(pir: PIR) -> bool` returns true when … |
-|------------------|--------------------------------------------------|------------------------------|--------------------------------------------------|
+|--------------|---------------------------------|--------------------|---------------------------------|
 | `Criterion` (abstract) | — | — | (raises `NotImplementedError`) |
 | `TypeIs` | `type_name: str`. Raises `ParseError`. | `type_name: str` | the PIR's type is `type_name` |
 | `Contains` | `field: str \| None`, `needle: str`. Raises `ParseError`. | `field: str \| None`, `needle: str` (case-folded) | the folded field value, or any text field when `field` is `None`, contains `needle` |
@@ -204,20 +204,22 @@ The subclass constructors:
 
 ### Module-level functions and constants of `model`
 
-| Return type | Function | Module | Arguments | Exceptions | Description |
-|----------------|-------------------|--------------|------------------------------|--------------------|------------------------------------------|
-| `Criterion` | `parse_criterion` | `criterion` | `text: str` | `ParseError` | Parses one criterion line (grammar in SRS FR-16). |
-| `list[tuple[str, str]]` | `tokenize` | `criterion` | `text: str` | `ParseError` | Splits a criterion line into (kind, value) tokens. |
-| `datetime` | `parse_datetime` | `pir` | `value: datetime \| str`, `field: str = "datetime"` | `ValidationError` | Parses ISO 8601 or `YYYY-MM-DD HH:MM`, defaults to HKT, and drops seconds. A blank value fails with `<field> is required`. |
-| `datetime \| None` | `parse_optional_datetime` | `pir` | `value: datetime \| str \| None` | `ValidationError` | As `parse_datetime`, but a blank value or `none` gives `None`. |
-| `str` | `format_datetime` | `pir` | `dt: datetime` | `ValidationError` | ISO 8601 text with the offset, to the minute (seconds are always `:00`). Rejects a datetime without a time zone. |
-| `type[PIR] \| None` | `pir_class` | `pir` | `type_name: str` | — | The PIR subclass for a type name, or `None`. |
-| `PIR` | `pir_from_json` | `pir` | `data: dict[str, object]` | `FileFormatError`, `ValidationError` | Rebuilds a PIR from its `pim/v1` object. |
-| `Path` | `require_pim_extension` | `pimfile` | `path: str \| os.PathLike[str]` | `ExtensionError` | The path, if it ends in `.pim`. |
-| `Path` | `append_pim_extension` | `pimfile` | `path: str \| os.PathLike[str]` | `ValidationError` | The path with `.pim` added if missing and `~` expanded; rejects an empty file name. |
-| `str` | `dump` | `pimfile` | `next_id: int`, `pirs: list[PIR]` | — | The text of a PIM File. |
-| `tuple[int, list[PIR]]` | `read_pim_file` | `pimfile` | `path: str \| os.PathLike[str]` | `ExtensionError`, `FileFormatError` | Parses a PIM File without touching any collection. |
-| `Path` | `write_pim_file` | `pimfile` | `path: str \| os.PathLike[str]`, `next_id: int`, `pirs: list[PIR]` | `ValidationError`, `OSError` | Creates missing folders, writes a temporary file, and atomically replaces the target. |
+| Return type | Function | Arguments | Exceptions | Description |
+|--------------------|-----------------------|---------------------|--------------------|----------------------|
+| `Criterion` | `criterion.parse_criterion` | `text: str` | `ParseError` | Parses one criterion line (grammar in SRS FR-16). |
+| `list[tuple[str, str]]` | `criterion.tokenize` | `text: str` | `ParseError` | Splits a criterion line into (kind, value) tokens. |
+| `datetime` | `pir.parse_datetime` | `value: datetime \| str`, `field: str = "datetime"` | `ValidationError` | Parses ISO 8601 or `YYYY-MM-DD HH:MM`, defaults to HKT, and drops seconds. A blank value fails with `<field> is required`. |
+| `datetime \| None` | `pir.parse_optional_datetime` | `value: datetime \| str \| None` | `ValidationError` | As `parse_datetime`, but a blank value or `none` gives `None`. |
+| `str` | `pir.format_datetime` | `dt: datetime` | `ValidationError` | ISO 8601 text with the offset, to the minute (seconds are always `:00`). Rejects a datetime without a time zone. |
+| `type[PIR] \| None` | `pir.pir_class` | `type_name: str` | — | The PIR subclass for a type name, or `None`. |
+| `PIR` | `pir.pir_from_json` | `data: dict[str, object]` | `FileFormatError`, `ValidationError` | Rebuilds a PIR from its `pim/v1` object. |
+| `Path` | `pimfile.require_pim_extension` | `path: str \| os.PathLike[str]` | `ValidationError`, `ExtensionError` | Expands `~` and returns the path when it ends in `.pim`. |
+| `Path` | `pimfile.append_pim_extension` | `path: str \| os.PathLike[str]` | `ValidationError` | Expands `~` and adds `.pim` if needed. |
+| `str` | `pimfile.dump` | `next_id: int`, `pirs: list[PIR]` | — | The text of a PIM File. |
+| `tuple[int, list[PIR]]` | `pimfile.read_pim_file` | `path: str \| os.PathLike[str]` | `ValidationError`, `ExtensionError`, `FileFormatError` | Checks the path and parses the file without mutating the collection. |
+| `Path` | `pimfile.write_pim_file` | `path: str \| os.PathLike[str]`, `next_id: int`, `pirs: list[PIR]` | `ValidationError`, `OSError` | Creates folders as needed and atomically replaces the target. |
+
+For the file functions, a missing file name or a name consisting only of `.pim` raises `ValidationError`. An unsupported extension raises `ExtensionError` when loading. Read errors and invalid file contents raise `FileFormatError`.
 
 Constants: `TYPE_NAMES` (the four type names), `HKT` (the default time zone, or a fixed UTC+8 zone without a time-zone database), and the field kinds `KIND_TEXT`, `KIND_DATETIME`, and `KIND_ALARMS` used in `FieldSpec`.
 
@@ -262,7 +264,7 @@ A PIM File is UTF-8 JSON. `write_pim_file` writes it, and `read_pim_file` checks
 
 ## 3.2 Controller and View classes
 
-![Controller and View classes. Argument types are shortened; the tables give the full types.](diagrams/controller-view-classes.png){width=100%}
+![Controller and View classes. Argument types are shortened; the tables give the full types.](diagrams/controller-view-classes.png){height=76%}
 
 **Relationships.**
 
@@ -286,7 +288,7 @@ Constructor: `App(pim: PIM)`. It binds to a Working Collection, which may be emp
 The controller reports failures instead of raising them: it sets `status` to one English line with `status_kind` `err` and returns `None` or `False`. The two exceptions are `save_target`, which the View calls to check a path before asking about an overwrite, and `due_alarms`, which passes on the model's `ValidationError` for an invalid `now`.
 
 | Return type | Method | Arguments | Exceptions | Description |
-|----------------------|------------------------------|--------------------------------|--------------------------|----------------------------------------------|
+|------------------|------------------|---------------------|--------------------|-----------------------|
 | `PIR \| None` | `create` | `type_name: str`, `fields: dict[str, object]` | — | Creates a PIR and selects it. |
 | `PIR \| None` | `modify` | `fields: dict[str, object]` | — | Modifies the Selection. Empty `fields` change nothing. |
 | `bool` | `delete_selected` | — | — | Deletes the Selection after the View has confirmed. |
@@ -335,7 +337,7 @@ Constructor: `Terminal(app: App, stdin: TextIO | None = None, stdout: TextIO | N
 These methods do not catch exceptions themselves. Every command runs inside a handler of the line loop, or inside `CursesUI._safe`, that turns any exception into the status line (NFR-4).
 
 | Return type | Method | Arguments | Description |
-|----------------------|--------------------------------|------------------------------------------|------------------------------------------------------------|
+|------------------|--------------------|-------------------------|-------------------------------------|
 | `None` | `run` | — | Starts `CursesUI` on a TTY, or otherwise the line loop. Returns on quit. |
 | `list[DueAlarm]` | `visible_due` | — | The due alarms minus the dismissed ones. |
 | `Screen` | `screen` | — | The screen model (title, alerts, list, details, status) that both front ends draw. |
@@ -380,7 +382,7 @@ A month grid and a time list for date-time prompts on a TTY (FR-11). The week st
 Constructor: `DateTimePicker(title: str, now: datetime, *, initial: datetime | None = None, required: bool = True)`. It starts on `initial`, or otherwise on the first 15-minute mark at or after `now`.
 
 | Return type | Method | Arguments | Exceptions | Description |
-|----------------------------|----------------------------|------------------------------|--------------------|--------------------------------------------------|
+|--------------------|-----------------|-------------------|------------|--------------------------------|
 | `str` | `value` | — | — | The text to submit, `YYYY-MM-DD HH:MM`. |
 | `str` | `summary` | — | — | A readable confirmation, for example `Mo 14 September 2026  18:30  HKT`. |
 | `str` | `month_title` | — | — | The month name and year for the grid header. |
@@ -396,7 +398,7 @@ Constructor: `DateTimePicker(title: str, now: datetime, *, initial: datetime | N
 
 The folder browser for load and save-as paths on a TTY (FR-39). It lists one folder: the parent link, the subfolders, and the `.pim` files, leaving out hidden entries. In save mode it adds a "new file in this folder" row. It returns a path string, so the prompt handler checks it like a typed path (Section 5.4).
 
-**Fields:** `mode: str` (`load` or `save`), `cwd: Path`, `entries: list[Entry]`, `index: int` (the highlighted row), `error: str` (set when the folder cannot be read). Each `Entry` has `kind: str` (`parent`, `folder`, `file`, or `new`) and `name: str`, and its method `label() -> str` gives the row text, with a `/` after a folder name.
+**Fields:** `mode: str` (`load` or `save`), `cwd: Path`, `entries: list[Entry]`, `index: int` (highlighted row), and `error: str` (folder read error). An `Entry` has `kind: str` (`parent`, `folder`, `file`, or `new`) and `name: str`. Its `label() -> str` returns the row text with a `/` after folder names.
 
 Constructor: `FileBrowser(mode: str, start: str | os.PathLike[str])`. It reads `start` at once.
 
@@ -419,9 +421,9 @@ Constructor: `FileBrowser(mode: str, start: str | os.PathLike[str])`. It reads `
 
 | Module | Role |
 |-------------------|----------------------------------------------------------------------|
-| `view.layout` | Builds the `Screen` model (title, alerts, list rows, details, menu) with `build_screen`, and formats list rows and pane titles. |
-| `view.widgets` | `Chooser`, `Choice`, and `DateTimePicker` (above); `Prompt`, one open question with its handler and at most one widget; the selector factories `type_chooser`, `yes_no_chooser`, `alarm_kind_chooser`, `alarm_amount_chooser`, `alarm_unit_chooser`, and `dirty_chooser`; and `wrap_chips` and `composer_height` for laying out the composer. |
-| `view.file_browser` | `FileBrowser` (above) and its row type `Entry`. |
+| `view.layout` | `build_screen` assembles `Screen` and `text_lines` formats the line interface. |
+| `view.widgets` | Defines `Prompt`, the composer helpers `wrap_chips` and `composer_height`, and the factories `type_chooser`, `yes_no_chooser`, `alarm_kind_chooser`, `alarm_amount_chooser`, `alarm_unit_chooser`, and `dirty_chooser`. |
+| `view.file_browser` | Defines `FileBrowser` and its row type `Entry`. |
 | `view.keys` | Maps keys to actions (accelerators), for example `w` save, `W` save as, `o` load. |
 | `view.theme` | Colour roles for 256-colour, 8-colour, and monochrome terminals. |
 | `view.textwidth` | Clipping and padding that respect East Asian character widths. |
@@ -448,7 +450,7 @@ A syntax error would raise `ParseError` at message 3. `App` would then leave the
 - *(11–15)* `modify` asks `App` for the Selection. `Terminal` then prompts field by field from the Event's `FIELDS`; an empty answer keeps a value.
 - *(16–17)* `Terminal` passes only the answered fields to `App.modify`, which forwards them to `PIM.modify`.
 - *(18–20)* The model uses **copy-then-replace**: it copies the Event and applies the change to the copy, which parses the new start and checks that every Effective Alarm Time is still in range.
-- *(21–26)* **If the copy is valid:** `PIM` puts the copy in place of the original under the same Id and marks the collection dirty. `App` runs the stored criterion again, so the Current Result is up to date, and the View shows the new start and the moved relative alarm times. (If the copy equals the original, `PIM` returns the original and the collection stays clean.)
+- *(21–26)* **If the copy is valid and differs from the original**, `PIM` replaces the record under the same Id and marks the collection dirty. `App` runs the stored criterion again, and the View shows the new start and the moved relative alarm times. If the values are identical, `PIM` returns the original and preserves the previous dirty state. `App` reports `No changes`.
 - *(27–30)* **If validation fails:** the exception propagates before the original is touched. `App` shows the message, and the data is exactly as before (FR-15, NFR-4).
 
 The diagram shows the main design points of the system:
@@ -515,8 +517,8 @@ Each table records one group of decisions: what was decided, why, and what was r
 
 **Efficiency.**
 
-- Search, the alarm check, save, and load each take time linear in the number of PIRs.
-- With 10,000 PIRs they take 2 ms, 2 ms, 44 ms, and 24 ms on the development Mac (SRS NFR-7).
+- Search, the alarm check, and save obtain PIRs in Id order through `PIM.all()`, whose sort takes $O(n \log n)$ time in the worst case for $n$ PIRs. Search also evaluates the criterion for each record, and the alarm check visits every Event alarm. Save and load process the JSON file, so their costs also depend on the amount of data stored.
+- The benchmark with 10,000 PIRs on the development Mac measured 2 ms for search, 2 ms for the alarm check, 44 ms for save, and 24 ms for load (SRS NFR-7).
 - The View redraws only when its screen snapshot changes, so the 500 ms tick causes no flicker.
 
 **Extendibility.**

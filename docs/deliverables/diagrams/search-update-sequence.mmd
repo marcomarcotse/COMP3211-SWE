@@ -30,7 +30,7 @@ sequenceDiagram
     P->>E: copy.copy(Event 4)
     P->>E: modify(fields)
     E->>E: parse start,<br/>check alarm times
-    alt valid
+    alt valid and changed
         E-->>P: ok
         P->>P: replace Id 4 with the copy,<br/>dirty = true
         P-->>A: updated Event 4
